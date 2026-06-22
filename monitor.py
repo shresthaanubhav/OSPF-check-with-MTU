@@ -8,8 +8,12 @@ from pathlib import Path
 import yaml
 from netmiko import ConnectHandler
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import io
+from contextlib import redirect_stdout
+
 DEVICES_FILE = Path(__file__).parent / "devices.yaml"
-VALID_NEIGHBOR_STATES = {"FULL/DR", "FULL/BDR"}
+VALID_NEIGHBOR_STATES = {"FULL/DR", "FULL/BDR", "FULL/DROTHER"}
 
 NEIGHBOR_CMD = "show ip ospf neighbor"
 ROUTE_CMD = "show ip route ospf"
@@ -248,8 +252,16 @@ def main() -> int:
         return 1
 
     print(f"Monitoring OSPF on {len(devices)} device(s)...")
-    for entry in devices:
-        monitor_device(entry)
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(monitor_device, entry): entry for entry in devices}
+        for future in as_completed(futures):
+            entry = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                name = entry.get("name", entry["hostname"])
+                print(f"ERROR: {name} raised exception: {exc}", file=sys.stderr)
 
     print(f"\n{'=' * 60}")
     print("Done.")
